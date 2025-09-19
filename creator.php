@@ -128,7 +128,7 @@ EOT;
         }
     }//fimModel
     function classesView() {
-        //formulários
+        //formulários de cadastro (existente)
         foreach ($this->tabelas as $tabela) {
             $nomeTabela = array_values((array) $tabela)[0];
             $atributos=$this->buscaAtributos($nomeTabela);
@@ -155,16 +155,17 @@ EOT;
 HTML;
   file_put_contents("sistema/view/{$nomeTabela}.php", $conteudo); // Exemplo salvando como arquivo
         }
-        //Listas
+
+        //Listas (modificado para incluir link de edição)
         foreach ($this->tabelas as $tabela) {
              $nomeTabela = array_values((array)$tabela)[0];
              $nomeTabelaUC=ucfirst($nomeTabela);
              $atributos=$this->buscaAtributos($nomeTabela);
              $attr = "";
-             $id="";
+             $idField=""; // Nome do campo da chave primária
              foreach($atributos as $atributo){
                 if($atributo->Key=="PRI")
-                    $id="{\$dado['{$atributo->Field}']}";
+                    $idField=$atributo->Field;
 
                 $attr.="echo \"<td>{\$dado['{$atributo->Field}']}</td>\";\n";
               }
@@ -179,14 +180,14 @@ HTML;
     <body>
       <?php
       require_once("../dao/{$nomeTabelaUC}Dao.php");
-   \$dao=new {$nomeTabela}DAO();
+   \$dao=new {$nomeTabelaUC}Dao();
    \$dados=\$dao->listaGeral();
    echo"<table border=1>";
     foreach(\$dados as \$dado){
         echo "<tr>";
        {$attr};
-       echo "<td><a href='../control/{$nomeTabela}Control.php?a=2&id={$id}'>Excluir</a></td>";
-       echo "<td>Alterar</td>";
+       echo "<td><a href='../control/{$nomeTabela}Control.php?a=2&id={\$dado['{$idField}']}'>Excluir</a></td>";
+       echo "<td><a href='../view/FormularioEdicao{$nomeTabelaUC}.php?id={\$dado['{$idField}']}'>Alterar</a></td>"; // Link para o formulário de edição
        echo "<tr>";
     }
     echo "</table>";
@@ -195,6 +196,50 @@ HTML;
 </html>
 HTML;           
   file_put_contents("sistema/view/Lista{$nomeTabela}.php", $conteudo);        
+        }
+
+        // Novo formulário de edição
+        foreach ($this->tabelas as $tabela) {
+            $nomeTabela = array_values((array) $tabela)[0];
+            $nomeTabelaUC = ucfirst($nomeTabela);
+            $atributos = $this->buscaAtributos($nomeTabela);
+            $formCampos = "";
+            $idField = "";
+
+            foreach ($atributos as $atributo) {
+                $atributoName = $atributo->Field;
+                if ($atributo->Key == "PRI") {
+                    $idField = $atributoName;
+                    // O campo ID será oculto e pré-preenchido
+                    $formCampos .= "<input type='hidden' name='{$atributoName}' value='<?php echo \$registro['{$atributoName}']; ?>'>\n";
+                } else {
+                    $formCampos .= "<label for='{$atributoName}'>{$atributoName}</label>\n";
+                    $formCampos .= "<input type='text' name='{$atributoName}' value='<?php echo \$registro['{$atributoName}']; ?>'><br>\n";
+                }
+            }
+
+            $conteudo = <<<HTML
+<html>
+    <head>
+        <title>Editar {$nomeTabelaUC}</title>
+        <link rel="stylesheet" href="../css/estilos.css">
+    </head>
+    <body>
+        <?php
+        require_once("../dao/{$nomeTabelaUC}Dao.php");
+        \$dao = new {$nomeTabelaUC}Dao();
+        \$id = \$_GET['id'];
+        \$registro = \$dao->buscarPorId(\$id); // Precisamos de um método buscarPorId na DAO
+        ?>
+        <form action="../control/{$nomeTabela}Control.php?a=3" method="post">
+        <h1>Editar {$nomeTabelaUC}</h1>
+            {$formCampos}
+             <button type="submit">Salvar Alterações</button>
+        </form>
+    </body>
+</html>
+HTML;
+            file_put_contents("sistema/view/FormularioEdicao{$nomeTabelaUC}.php", $conteudo);
         }
     }//fimView
    
@@ -236,10 +281,15 @@ EOT;
             $atributos=$this->buscaAtributos($nomeTabela);
             $nomeClasse=ucfirst($nomeTabela);
             $posts="";
+            $primaryKeyField = ""; // Para armazenar o nome do campo da chave primária
+
             foreach ($atributos as $atributo) {
-                $atributo=$atributo->Field;
-                $posts.= "\$this->{$nomeTabela}->set".ucFirst($atributo).
-                    "(\$_POST['{$atributo}']);\n\t\t";
+                $atributoName = $atributo->Field;
+                $posts.= "\$this->{$nomeTabela}->set".ucFirst($atributoName).
+                    "(\$_POST['{$atributoName}']);\n\t\t";
+                if ($atributo->Key == "PRI") {
+                    $primaryKeyField = $atributoName;
+                }
             }
 
             $conteudo = <<<EOT
@@ -264,6 +314,9 @@ class {$nomeClasse}Control {
           case 2:
             \$this->excluir();
             break;
+          case 3: // Novo case para edição
+            \$this->alterar();
+            break;
        }
     }
     function inserir(){
@@ -273,7 +326,13 @@ class {$nomeClasse}Control {
     function excluir(){
         \$this->dao->excluir(\$_REQUEST['id']);
     }
-    function alterar(){}
+    function alterar(){ // Novo método para alterar
+        // Preenche o objeto com os dados do POST
+        {$posts}
+        // Define a chave primária para o objeto
+        \$this->{$nomeTabela}->set{$primaryKeyField}( \$_POST['{$primaryKeyField}'] );
+        \$this->dao->alterar(\$this->{$nomeTabela});
+    }
     function buscarId({$nomeClasse} \${$nomeTabela}){}
     function buscaTodos(){}
 
@@ -317,23 +376,51 @@ function ClassesDao(){
             $nomeClasse = ucfirst($nomeTabela);
             $atributos=$this->buscaAtributos($nomeTabela);
             $id ="";
+            $updateFields = []; // Para construir a parte SET da query de update
+
             foreach($atributos as $atributo){
-                if($atributo->Key == "PRI")
+                if($atributo->Key == "PRI") {
                     $id = $atributo->Field;
+                }
+                // Adiciona todos os campos para a parte SET, exceto a chave primária
+                $updateFields[] = "{$atributo->Field} = ?";
             }
-            $atributos = array_map(function($obj) {
-             return $obj->Field;
-         }, $atributos);
-            $sqlCols = implode(', ', $atributos);
+            // Remove a chave primária da lista de campos para o SET, pois ela será usada no WHERE
+            $updateFields = array_filter($updateFields, function($field) use ($id) {
+                return strpos($field, "{$id} = ?") === false;
+            });
+
+            $sqlCols = implode(', ', array_map(function($obj) { return $obj->Field; }, $atributos));
             $placeholders = implode(', ', array_fill(0, count($atributos), '?'));
-         $vetAtributos=[];
-         $AtributosMetodos="";
-         foreach ($atributos as $atributo) {
-             $atr=ucfirst($atributo);
-             array_push($vetAtributos,"\${$atributo}");
-             $AtributosMetodos.="\${$atributo}=\$obj->get{$atr}();\n";
-         }
-         $atributosOk=implode(",",$vetAtributos);
+         
+            $vetAtributos=[];
+            $AtributosMetodos="";
+            foreach ($atributos as $atributo) {
+                $atr=ucfirst($atributo->Field);
+                array_push($vetAtributos,"\${$atributo->Field}");
+                $AtributosMetodos.="\${$atributo->Field}=\$obj->get{$atr}();\n";
+            }
+            $atributosOk=implode(",",$vetAtributos);
+
+            // Atributos para a query de update (todos exceto a chave primária, e a chave primária no final)
+            $updateAtributos = [];
+            $updateAtributosMetodos = "";
+            $primaryKeyGetter = "";
+
+            foreach ($atributos as $atributo) {
+                $atrName = $atributo->Field;
+                $atrUcfirst = ucfirst($atrName);
+                if ($atributo->Key != "PRI") {
+                    $updateAtributos[] = "\${$atrName}";
+                    $updateAtributosMetodos .= "\${$atrName}=\$obj->get{$atrUcfirst}();\n";
+                } else {
+                    $primaryKeyGetter = "\$obj->get{$atrUcfirst}()";
+                }
+            }
+            $updateAtributos[] = $primaryKeyGetter; // Adiciona a chave primária no final para o WHERE
+            $updateAtributosOk = implode(",",$updateAtributos);
+            $setClause = implode(', ', $updateFields);
+
 
          $conteudo = <<<EOT
 <?php
@@ -348,6 +435,7 @@ function inserir(\$obj) {
     \$stmt = \$this->con->prepare(\$sql);
     {$AtributosMetodos}
     \$stmt->execute([{$atributosOk}]);
+    header("Location:../view/Lista{$nomeClasse}.php");
 }
 function listaGeral(){
     \$sql = "select * from {$nomeTabela}";
@@ -356,11 +444,25 @@ function listaGeral(){
     return \$dados;
 }
 function excluir(\$id){
-    \$sql = "DELETE FROM {$nomeTabela} WHERE {$id}=\$id";
-    \$query = \$this->con->query(\$sql);
-    header("Location:../view/Lista{$nomeTabela}.php");
-
-
+    \$sql = "DELETE FROM {$nomeTabela} WHERE {$id}=:id";
+    \$stmt = \$this->con->prepare(\$sql);
+    \$stmt->bindParam(':id', \$id);
+    \$stmt->execute();
+    header("Location:../view/Lista{$nomeClasse}.php");
+}
+function alterar(\$obj){ // Novo método para alterar
+    \$sql = "UPDATE {$nomeTabela} SET {$setClause} WHERE {$id} = ?";
+    \$stmt = \$this->con->prepare(\$sql);
+    {$updateAtributosMetodos}
+    \$stmt->execute([{$updateAtributosOk}]);
+    header("Location:../view/Lista{$nomeClasse}.php");
+}
+function buscarPorId(\$id){ // Novo método para buscar por ID
+    \$sql = "SELECT * FROM {$nomeTabela} WHERE {$id} = :id";
+    \$stmt = \$this->con->prepare(\$sql);
+    \$stmt->bindParam(':id', \$id);
+    \$stmt->execute();
+    return \$stmt->fetch(PDO::FETCH_ASSOC);
 }
 }
 ?>
